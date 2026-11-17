@@ -17,60 +17,212 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download and merge playlists
+      - name: Download and filter playlists
         run: |
           python3 - <<'PY'
           from urllib.request import Request, urlopen
           from pathlib import Path
+          import re
 
-          sources = [
-              "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_belarus.m3u8",
-              "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_ukraine.m3u8",
-              "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_russia.m3u8",
+          SOURCES = [
+              ("BY", "Беларусь",
+               "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_belarus.m3u8"),
+              ("UA", "Украина",
+               "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_ukraine.m3u8"),
+              ("RU", "Россия",
+               "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_russia.m3u8"),
           ]
 
-          output = ["#EXTM3U"]
-          total = 0
+          # Известные региональные каналы по tvg-id
+          REGIONAL_IDS = {
+              # Беларусь
+              "8kanal.by", "Belarus4Vitebsk.by",
+              "NasheTV.by", "Vitebsk.by", "RadioHit.ru",
 
-          for url in sources:
-              req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-              with urlopen(req, timeout=60) as response:
-                  data = response.read().decode("utf-8-sig")
+              # Украина
+              "SuspilneKyiv.ua", "SuspilneDnipro.ua",
+              "SuspilneZhytomyr.ua", "SuspilneOdesa.ua",
+              "SuspilneSumy.ua", "SuspilneKhmelnytskyi.ua",
+              "SuspilneChernivtsi.ua",
+              "SuspilneKropyvnytskyi.ua",
+              "SuspilneLutsk.ua", "SuspilneKrym.ua",
+              "SuspilneTernopil.ua",
+              "SuspilneChernihiv.ua",
+              "DniproTV.ua", "TelekanalRAI.ua",
+              "Ternopil1.ua", "SK1.ua",
+              "PervyygorodskoyOdessa.ua", "Kyiv.ua",
+              "ITV.ua", "NTKTV.ua", "TVA.ua", "TV7Plus.ua",
 
-              lines = [
-                  line.rstrip()
-                  for line in data.splitlines()
-                  if line.strip()
-                  and not line.lstrip().startswith("#EXTM3U")
-              ]
+              # Россия
+              "Arktika24.ru", "Arkhyz24.ru",
+              "Astrakhan24.ru", "Bashkortostan24.ru",
+              "Belgorod24.ru", "Vetta24.ru",
+              "Volgograd24.ru", "Zapad24.ru",
+              "Katun24.ru", "Crimea24.ru",
+              "Kuban24.ru", "Lugansk24.ua",
+              "MirBelogorya.ru", "Moskva24.ru",
+              "NizhniyNovgorod24.ru", "Samara24.ru",
+              "Saratov24.ru", "Sibir24.ru",
+              "Tolyatti24.ru", "Ural24.ru",
+              "Yakutiya24.ru", "360News.ru", "Sever.ru",
+          }
 
-              count = sum(
-                  1 for line in lines
-                  if line.startswith("#EXTINF")
+          # Названия городов и регионов для новых записей
+          REGIONAL_TERMS = [
+              "vitebsk", "витебск", "орск",
+              "гродно", "гомель", "могилев", "брест",
+              "барановичи", "бобруйск", "пинск",
+              "орша", "новополоцк", "мозырь", "лида",
+              "солигорск", "жлобин",
+
+              "київ", "киев", "kyiv", "дніпро", "днепр",
+              "dnipro", "житомир", "zhytomyr",
+              "одеса", "одесса", "odesa", "odessa",
+              "сумы", "sumy", "хмельницький",
+              "khmelnytskyi", "чернівці", "chernivtsi",
+              "кропивницький", "kropyvnytskyi",
+              "луцьк", "lutsk", "крим", "crimea",
+              "тернопіль", "ternopil", "чернігів",
+              "chernihiv", "коломия", "kolomyia",
+              "рівне", "rivne",
+
+              "арктика", "arktika", "архыз", "arkhyz",
+              "астрахан", "astrakhan", "башкортостан",
+              "bashkortostan", "белгород", "belgorod",
+              "ветта", "volgograd", "волгоград",
+              "запад 24", "катунь", "katun",
+              "кубань", "кубан", "луганск",
+              "белогорья", "белогорье",
+              "москва 24", "нижний новгород",
+              "самара", "саратов", "сибирь",
+              "тольятти", "урал 24", "якутия",
+              "360 новости"
+          ]
+
+          def parse_entries(data):
+              entries = []
+              current = []
+
+              for raw in data.splitlines():
+                  line = raw.strip()
+
+                  if not line or line.startswith("#EXTM3U"):
+                      continue
+
+                  if line.startswith("#EXTINF:"):
+                      if current:
+                          entries.append(current)
+                      current = [line]
+                  elif current:
+                      current.append(line)
+
+              if current:
+                  entries.append(current)
+
+              return entries
+
+          def is_regional(entry):
+              meta = entry[0]
+
+              match = re.search(r'tvg-id="([^"]+)"', meta)
+              if match and match.group(1) in REGIONAL_IDS:
+                  return True
+
+              # Не проверяем URL логотипа, только название и метаданные
+              header = re.sub(r'tvg-logo="[^"]*"', '', meta)
+              text = header.casefold()
+
+              return any(term in text for term in REGIONAL_TERMS)
+
+          result = ["#EXTM3U"]
+          total_kept = 0
+
+          for code, group, url in SOURCES:
+              print(f"\nDownloading: {group}")
+
+              request = Request(
+                  url,
+                  headers={"User-Agent": "Mozilla/5.0"}
               )
 
-              if count == 0:
-                  raise RuntimeError(f"No channels found: {url}")
+              with urlopen(request, timeout=60) as response:
+                  data = response.read().decode("utf-8-sig")
 
-              output.extend(lines)
-              total += count
+              entries = parse_entries(data)
+
+              if not entries:
+                  raise RuntimeError(f"No channels received: {group}")
+
+              kept = 0
+              removed = 0
+
+              for entry in entries:
+                  if is_regional(entry):
+                      removed += 1
+                      print("REMOVED:", entry[0].split(",")[-1])
+                      continue
+
+                  # Проверяем наличие адреса потока
+                  if not any(
+                      line.startswith(("http://", "https://",
+                                       "rtmp://", "rtsp://"))
+                      for line in entry[1:]
+                  ):
+                      continue
+
+                  # Делаем понятные группы стран в OTT Navigator
+                  header = entry[0]
+                  first, separator, channel_name = header.partition(",")
+
+                  if not separator:
+                      continue
+
+                  first = re.sub(
+                      r'\s+group-title="[^"]*"',
+                      "",
+                      first
+                  )
+
+                  entry[0] = (
+                      first + f' group-title="{group}"'
+                      + separator + channel_name
+                  )
+
+                  result.extend(entry)
+                  kept += 1
+
+              if kept == 0:
+                  raise RuntimeError(
+                      f"No channels left after filtering: {group}"
+                  )
+
+              total_kept += kept
+
+              print(
+                  f"{group}: kept {kept}, removed regional {removed}"
+              )
+
+          if total_kept == 0:
+              raise RuntimeError("Empty final playlist")
 
           Path("playlist.m3u8").write_text(
-              "\n".join(output) + "\n",
+              "\n".join(result) + "\n",
               encoding="utf-8"
           )
 
-          print(f"Total channels: {total}")
+          print(f"\nTOTAL CHANNELS: {total_kept}")
           PY
 
-      - name: Save updated playlist
+      - name: Commit updated playlist
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add playlist.m3u8
+
           if git diff --cached --quiet; then
             echo "Playlist unchanged"
           else
-            git commit -m "Update IPTV playlist"
+            git commit -m "Update IPTV playlist without regional channels"
             git push
           fi
