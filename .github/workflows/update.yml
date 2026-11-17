@@ -11,86 +11,29 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download, filter and validate playlists
-        shell: bash
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Check script syntax
+        run: python -m py_compile .github/scripts/build_playlist.py
+
+      - name: Build playlist
+        run: python .github/scripts/build_playlist.py
+
+      - name: Commit updated playlist
         run: |
-          python3 - <<'PY'
-          from urllib.request import Request, urlopen
-          from urllib.parse import urlsplit
-          from pathlib import Path
-          import re
-          import html
-
-          SOURCES = [
-              ("BY", "Беларусь",
-               "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_belarus.m3u8",
-               "https://raw.githubusercontent.com/Free-TV/IPTV/master/lists/belarus.md"),
-              ("UA", "Украина",
-               "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_ukraine.m3u8",
-               "https://raw.githubusercontent.com/Free-TV/IPTV/master/lists/ukraine.md"),
-              ("RU", "Россия",
-               "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_russia.m3u8",
-               "https://raw.githubusercontent.com/Free-TV/IPTV/master/lists/russia.md"),
-          ]
-
-          # Известные региональные/городские каналы из списков Free-TV.
-          REGIONAL_IDS = {
-              "BY": {
-                  "8kanal.by", "belarus4vitebsk.by", "nashetv.by",
-                  "vitebsk.by", "radiohit.ru",
-              },
-              "UA": {
-                  "dniproTV.ua", "telekanalrai.ua", "ternopil1.ua", "sk1.ua",
-                  "pervyygorodskoyodessa.ua", "kyiv.ua", "itv.ua",
-                  "ntktv.ua", "tva.ua", "tv7plus.ua",
-                  "suspilnekyiv.ua", "suspilnednipro.ua",
-                  "suspilnezhytomyr.ua", "suspilneodesa.ua",
-                  "suspilnesumy.ua", "suspilnekhmelnytskyi.ua",
-                  "suspilnechernivtsi.ua", "suspilnekropyvnytskyi.ua",
-                  "suspilnelutsk.ua", "suspilnekrym.ua",
-                  "suspilneternopil.ua", "suspilnechernihiv.ua",
-              },
-              "RU": {
-                  "arktika24.ru", "arkhyz24.ru", "astrakhan24.ru",
-                  "bashkortostan24.ru", "belgorod24.ru", "vetta24.ru",
-                  "volgograd24.ru", "zapad24.ru", "katun24.ru",
-                  "crimea24.ru", "kuban24.ru", "mirbelogorya.ru",
-                  "moskva24.ru", "nizhniynovgorod24.ru", "samara24.ru",
-                  "saratov24.ru", "sibir24.ru", "tolyatti24.ru",
-                  "yakutiya24.ru", "moscow24.ru", "lugansk24.ua",
-                  "ural24.ru", "360news.ru", "sever.ru",
-              },
-          }
-
-          # Названия региональных станций/филиалов. Проверяются только
-          # поля tvg-id, tvg-name и название после запятой, не URL логотипа.
-          REGIONAL_TERMS = {
-              "BY": [
-                  "витебск", "vitebsk", "гродно", "гомель", "могилев",
-                  "брест", "барановичи", "бобруйск", "пинск", "орша",
-                  "новополоцк", "мозырь", "лида", "солигорск", "жлобин",
-              ],
-              "UA": [
-                  "суспільне київ", "суспільне дніпро", "суспільне житомир",
-                  "суспільне одеса", "суспільне суми", "суспільне хмельницький",
-                  "суспільне чернівці", "суспільне кропивницький",
-                  "суспільне луцьк", "суспільне крим", "суспільне тернопіль",
-                  "суспільне чернігів", "дніпро tv", "днепр tv",
-              ],
-              "RU": [
-                  "арктика 24", "архыз 24", "arkhyz 24", "астрахан 24",
-                  "башкортостан 24", "белгород 24", "ветта 24",
-                  "волгоград 24", "запад 24", "катунь 24", "крым 24",
-                  "кубань 24", "луганск 24", "мир белгогорья",
-                  "москва 24", "нижний новгород 24", "самара 24",
-                  "саратов 24", "сибирь 24", "тольятти 24", "урал 24",
-                  "якутия 24", "360 новости",
-              ],
-          }
-
-          RADIO_PATTERN = re.compile(
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add playlist.m3u8
+          if git diff --cached --quiet; then
+            echo "Playlist unchanged"
+          else
+            git commit -m "Update filtered IPTV playlist"
+            git push
+          fi
